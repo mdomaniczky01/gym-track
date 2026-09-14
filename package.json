@@ -1,0 +1,12 @@
+{
+  "name": "entreno",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "npx serve public"
+  },
+  "dependencies": {
+    "jsdom": "^30.0.1",
+    "xlsx": "^0.18.5"
+  }
+}
