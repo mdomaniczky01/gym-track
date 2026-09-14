@@ -23,38 +23,106 @@ const OPT = {
   natacion: [['hrMax','FC máx','ppm'],['kcal','Calorías','kcal'],['lengths','Largos',''],['swolf','SWOLF',''],['pool','Pileta','m']]
 };
 
+OPT.libre = [['dist','Distancia','km'],['hrAvg','FC promedio','ppm'],['hrMax','FC máx','ppm'],
+  ['kcal','Calorías','kcal'],['steps','Pasos',''],['elev','Desnivel','m'],
+  ['cadence','Cadencia','ppm'],['effect','Training effect',''],['temp','Temperatura','°C']];
+
+/* dist y hrAvg viven en el objeto raíz para que entren en las métricas */
+const OPT_ROOT = { dist:'dist', hrAvg:'hrAvg' };
+const getOpt = k => OPT_ROOT[k] ? D[OPT_ROOT[k]] : D.opt[k];
+const setOpt = (k, v) => {
+  if (OPT_ROOT[k]) D[OPT_ROOT[k]] = (v === null) ? null : (v === '' ? '' : num(v));
+  else D.opt[k] = v;
+};
+const hasOpt = k => { const v = getOpt(k); return v !== undefined && v !== null; };
+
 const STYLES = ['Crol','Espalda','Pecho','Mariposa','Mixto'];
 const GROUPS = ['Pecho','Espalda','Hombros','Bíceps','Tríceps','Cuádriceps','Isquios','Glúteos','Gemelos','Core','Full body'];
 
-const DEFAULT_EX = [
-  ['Press banca','Pecho'],['Press inclinado con mancuernas','Pecho'],['Aperturas en polea','Pecho'],
-  ['Fondos','Pecho'],['Press militar','Hombros'],['Elevaciones laterales','Hombros'],
-  ['Extensión de tríceps en polea','Tríceps'],['Rompecráneos','Tríceps'],
-  ['Dominadas','Espalda'],['Remo con barra','Espalda'],['Jalón al pecho','Espalda'],
-  ['Remo en polea baja','Espalda'],['Face pull','Hombros'],['Curl con barra','Bíceps'],
-  ['Curl martillo','Bíceps'],['Sentadilla','Cuádriceps'],['Prensa','Cuádriceps'],
-  ['Peso muerto rumano','Isquios'],['Extensión de cuádriceps','Cuádriceps'],
-  ['Curl femoral','Isquios'],['Hip thrust','Glúteos'],['Elevación de gemelos','Gemelos'],
-  ['Plancha','Core'],['Rueda abdominal','Core']
+const DEFAULT_ROUTINES = [
+  ['Push','Press de banca con barra','Press de banca inclinado con mancuernas','Press militar sentado con mancuernas',
+   'Elevaciones laterales con mancuernas','Extensión de tríceps en polea con cuerda','Fondos en paralelas lastrados'],
+  ['Pull','Dominadas lastradas','Remo con barra','Jalón al pecho en polea','Face pull en polea',
+   'Curl de bíceps con barra Z','Curl martillo con mancuernas'],
+  ['Legs','Sentadilla con barra','Prensa de piernas a 45° en máquina','Peso muerto rumano con barra',
+   'Curl femoral tumbado en máquina','Hip thrust con barra','Elevación de gemelos de pie en máquina']
 ];
 
-const DEFAULT_ROUTINES = [
-  ['Push','Press banca','Press inclinado con mancuernas','Press militar','Elevaciones laterales','Extensión de tríceps en polea','Fondos'],
-  ['Pull','Dominadas','Remo con barra','Jalón al pecho','Face pull','Curl con barra','Curl martillo'],
-  ['Legs','Sentadilla','Prensa','Peso muerto rumano','Curl femoral','Hip thrust','Elevación de gemelos']
-];
+/* modificadores de carga sugeridos por grupo (kg) */
+const STEP = { Pecho:2.5, Espalda:2.5, Hombros:2.5, Bíceps:1.25, Tríceps:1.25, Antebrazo:1.25,
+  Cuádriceps:5, Isquios:5, Glúteos:5, Gemelos:5, 'Full body':5, Core:2.5, Movilidad:0 };
 
 /* ============================ estado ============================ */
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
+const norm = s => String(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .replace(/[^a-z0-9]+/g, ' ').trim();
+const catId = name => 'c:' + norm(name);
+
 function seed() {
-  const exercises = DEFAULT_EX.map(([name, group]) => ({ id: uid(), name, group }));
-  const byName = n => (exercises.find(e => e.name === n) || {}).id;
   const routines = DEFAULT_ROUTINES.map(r => ({
-    id: uid(), name: r[0], exerciseIds: r.slice(1).map(byName).filter(Boolean)
+    id: uid(), name: r[0], exerciseIds: r.slice(1).map(catId)
   }));
-  return { version:1, exercises, routines, sessions:[], weights:[], settings:{ focus:'pesas' } };
+  return { version:2, custom:[], overrides:{}, hidden:[], routines,
+    sessions:[], weights:[], settings:{ focus:'pesas' } };
+}
+
+/* ---- biblioteca: catálogo fijo + ejercicios propios + renombres ---- */
+let EX = [], EXMAP = {};
+function buildEx() {
+  const hidden = new Set(S.hidden || []);
+  const ov = S.overrides || {};
+  EX = [];
+  (window.EX_CATALOG || []).forEach(c => {
+    const id = 'c:' + c.s;
+    if (hidden.has(id)) return;
+    const o = ov[id];
+    const name = (o && o.name) || c.n;
+    EX.push({ id, name, group: o && o.group != null ? o.group : c.g, s: norm(name), cat: true });
+  });
+  (S.custom || []).forEach(e => {
+    if (hidden.has(e.id)) return;
+    EX.push({ id: e.id, name: e.name, group: e.group || '', s: norm(e.name) });
+  });
+  EXMAP = {};
+  EX.forEach(e => EXMAP[e.id] = e);
+}
+function exLookup(id) {
+  if (EXMAP[id]) return EXMAP[id];
+  const o = (S.overrides || {})[id];
+  const cust = (S.custom || []).find(x => x.id === id);
+  if (cust) return { id, name: cust.name, group: cust.group || '' };
+  if (String(id).indexOf('c:') === 0) {
+    const c = (window.EX_CATALOG || []).find(x => 'c:' + x.s === id);
+    if (c) return { id, name: (o && o.name) || c.n, group: (o && o.group) || c.g };
+  }
+  if (o && o.name) return { id, name: o.name, group: o.group || '' };
+  return null;
+}
+function exGroup(id) { const e = exLookup(id); return e ? e.group : ''; }
+
+/* usos por ejercicio, para ordenar la búsqueda */
+function usageMap() {
+  const u = {};
+  S.sessions.forEach(x => (x.entries || []).forEach(en => { u[en.exerciseId] = (u[en.exerciseId] || 0) + 1; }));
+  return u;
+}
+function searchEx(q, limit) {
+  const u = usageMap();
+  const toks = norm(q).split(' ').filter(Boolean);
+  let hits = toks.length ? EX.filter(e => toks.every(t => e.s.indexOf(t) >= 0)) : EX.slice();
+  hits.sort((a, b) => {
+    const ua = u[a.id] || 0, ub = u[b.id] || 0;
+    if (ua !== ub) return ub - ua;
+    if (toks.length) {
+      const sa = a.s.indexOf(toks[0]) === 0 ? 0 : 1, sb = b.s.indexOf(toks[0]) === 0 ? 0 : 1;
+      if (sa !== sb) return sa - sb;
+      if (a.name.length !== b.name.length) return a.name.length - b.name.length;
+    }
+    return a.name.localeCompare(b.name, 'es');
+  });
+  return { total: hits.length, list: hits.slice(0, limit || 40) };
 }
 
 let S = null;
@@ -65,17 +133,42 @@ function load() {
     if (!raw) { S = seed(); save(); return; }
     const d = JSON.parse(raw);
     S = Object.assign(seed(), d);
-    S.exercises = d.exercises || S.exercises;
+    S.custom    = Array.isArray(d.custom)  ? d.custom  : [];
+    S.hidden    = Array.isArray(d.hidden)  ? d.hidden  : [];
+    S.overrides = d.overrides && typeof d.overrides === 'object' ? d.overrides : {};
     S.routines  = d.routines  || S.routines;
     S.sessions  = Array.isArray(d.sessions) ? d.sessions : [];
     S.weights   = Array.isArray(d.weights)  ? d.weights  : [];
     S.settings  = Object.assign({ focus:'pesas' }, d.settings || {});
+    delete S.settings.apiKey;
+    if (Array.isArray(d.exercises) && d.exercises.length) migrateV1(d.exercises);
+    S.version = 2; delete S.exercises;
   } catch (e) {
     console.error(e); S = seed();
   }
+  buildEx();
+  save();
+}
+
+/* Los ejercicios viejos tenían id propio: los mapeo al catálogo por nombre
+   y los que no existen quedan como ejercicios propios. */
+function migrateV1(olds) {
+  const cat = {};
+  (window.EX_CATALOG || []).forEach(c => { cat[c.s] = 'c:' + c.s; });
+  const map = {};
+  olds.forEach(e => {
+    const k = norm(e.name);
+    if (cat[k]) map[e.id] = cat[k];
+    else { S.custom.push({ id: e.id, name: e.name, group: e.group || '' }); map[e.id] = e.id; }
+  });
+  const fix = id => map[id] || id;
+  S.routines.forEach(r => r.exerciseIds = r.exerciseIds.map(fix));
+  S.sessions.forEach(x => (x.entries || []).forEach(en => en.exerciseId = fix(en.exerciseId)));
+  Object.keys(S.overrides || {}).forEach(k => { if (map[k] && map[k] !== k) { S.overrides[map[k]] = S.overrides[k]; delete S.overrides[k]; } });
 }
 
 function save() {
+  buildEx();
   try { localStorage.setItem(KEY, JSON.stringify(S)); return true; }
   catch (e) { toast('No se pudo guardar: el almacenamiento está lleno'); return false; }
 }
@@ -135,7 +228,7 @@ function sessionTitle(x) {
   return MOD[x.modality].nm;
 }
 function exName(id) {
-  const e = S.exercises.find(x => x.id === id);
+  const e = exLookup(id);
   return e ? e.name : 'Ejercicio borrado';
 }
 function volumeOf(x) {
@@ -283,7 +376,7 @@ let EDIT_ID = null;    // id si estoy editando
 function newDraft(m) {
   const base = { id: uid(), created: Date.now(), date: todayISO(), modality: m, notes: '' };
   if (m === 'pesas') return Object.assign(base, { name: '', routineId: '', entries: [], durSec: null });
-  if (m === 'libre') return Object.assign(base, { name: '', durSec: null, intensity: '' });
+  if (m === 'libre') return Object.assign(base, { name: '', durSec: null, intensity: '', dist: null, hrAvg: null, opt: {} });
   return Object.assign(base, { dist: null, durSec: null, hrAvg: null, opt: {}, style: '', laps: [] });
 }
 
@@ -341,6 +434,7 @@ function leaveForm() {
 function saveForm() {
   if (!D.date) { toast('Falta la fecha'); return; }
   const m = D.modality;
+  ['dist', 'hrAvg'].forEach(k => { if (D[k] === '' || (D[k] != null && !isFinite(D[k]))) D[k] = null; });
 
   if (m === 'pesas') {
     D.entries = (D.entries || []).map(en => ({
@@ -354,6 +448,7 @@ function saveForm() {
     }
   } else if (m === 'libre') {
     if (!D.name) { toast('Ponele un nombre a la actividad'); return; }
+    Object.keys(D.opt || {}).forEach(k => { if (D.opt[k] === '' || D.opt[k] == null) delete D.opt[k]; });
   } else {
     if (!D.dist && !D.durSec) { toast('Cargá al menos distancia o tiempo'); return; }
   }
@@ -447,34 +542,46 @@ function wirePesas() {
   };
 }
 
-function pickExercise() {
-  const html = `
-    <h2>Agregar ejercicio</h2>
-    <input id="exSearch" placeholder="Buscar o escribir uno nuevo" autocomplete="off">
-    <div id="exResults" style="margin-top:6px"></div>`;
-  openSheet(html);
-  const draw = (q = '') => {
-    const ql = q.toLowerCase().trim();
-    const hits = S.exercises.filter(e => e.name.toLowerCase().includes(ql))
-      .sort((a, b) => a.name.localeCompare(b.name, 'es'));
+/* buscador de ejercicios reutilizable (sesiones, rutinas, ajustes) */
+let EQ = '';
+function exSearchSheet(title, onPick) {
+  openSheet(`
+    <h2>${esc(title)}</h2>
+    <input id="exSearch" placeholder="Buscar entre ${(window.EX_CATALOG || []).length} ejercicios" autocomplete="off" value="${esc(EQ)}">
+    <div id="exResults" style="margin-top:6px"></div>`);
+  const draw = () => {
+    const q = EQ.trim();
+    const { total, list } = searchEx(q, 40);
+    const exact = list.some(e => e.s === norm(q));
     $('#exResults').innerHTML =
-      (ql && !S.exercises.some(e => e.name.toLowerCase() === ql)
-        ? `<button class="li grow" data-new="1" style="width:100%;text-align:left"><div><div class="nm">Crear “${esc(q)}”</div><div class="gp">Se agrega a tu biblioteca</div></div></button>` : '') +
-      (hits.length ? hits.map(e => `<button class="li" data-id="${e.id}" style="width:100%;text-align:left"><div><div class="nm">${esc(e.name)}</div><div class="gp">${esc(e.group || '')}</div></div></button>`).join('')
-        : (ql ? '' : '<div class="empty">Tu biblioteca está vacía.</div>'));
+      (q && !exact ? `<button class="li" data-new="1" style="width:100%;text-align:left">
+          <div class="grow"><div class="nm">Crear “${esc(q)}”</div><div class="gp">Se guarda en tu biblioteca</div></div></button>` : '') +
+      (list.length
+        ? list.map(e => `<button class="li" data-id="${e.id}" style="width:100%;text-align:left">
+            <div class="grow"><div class="nm">${esc(e.name)}</div><div class="gp">${esc(e.group || 'Sin grupo')}</div></div></button>`).join('') +
+          (total > list.length ? `<div style="color:var(--faint);font-size:12.5px;padding:10px 0;text-align:center">+${total - list.length} más. Escribí para afinar la búsqueda.</div>` : '')
+        : (q ? '' : '<div class="empty">Sin ejercicios.</div>'));
     $('#exResults').querySelectorAll('button').forEach(b => b.onclick = () => {
       let id = b.dataset.id;
       if (b.dataset.new) {
-        const ex = { id: uid(), name: q.trim(), group: '' };
-        S.exercises.push(ex); save(); id = ex.id;
+        const ex = { id: uid(), name: q, group: '' };
+        S.custom.push(ex); save(); id = ex.id;
       }
-      D.entries.push({ exerciseId: id, sets: [{ w: null, r: null }] });
-      closeSheet(); SCREENS.form();
+      EQ = ''; onPick(id);
     });
   };
-  draw('');
-  $('#exSearch').oninput = e => draw(e.target.value);
-};
+  draw();
+  const inp = $('#exSearch');
+  inp.oninput = e => { EQ = e.target.value; draw(); };
+}
+
+function pickExercise() {
+  EQ = '';
+  exSearchSheet('Agregar ejercicio', id => {
+    D.entries.push({ exerciseId: id, sets: [{ w: null, r: null }] });
+    closeSheet(); SCREENS.form();
+  });
+}
 
 /* ---------------------------- cardio ---------------------------- */
 
@@ -483,7 +590,7 @@ function formCardio() {
   const isSwim = m === 'natacion';
   const distLabel = isSwim ? 'Distancia (m)' : 'Distancia (km)';
   const opts = OPT[m];
-  const shown = opts.filter(o => o[0] in D.opt && D.opt[o[0]] !== null);
+  const shown = opts.filter(o => hasOpt(o[0]));
   return `
     <div class="grid2">
       <div class="field" style="margin:0">
@@ -516,13 +623,39 @@ function formCardio() {
 
 function optHTML(o) {
   const [k, label, unit] = o;
+  const v = getOpt(k);
   return `<div class="field" data-opt="${k}">
     <label class="label">${label}${unit ? ' (' + unit + ')' : ''}</label>
     <div class="row">
-      <input class="grow" data-optin="${k}" inputmode="decimal" value="${D.opt[k] != null ? D.opt[k] : ''}">
+      <input class="grow" data-optin="${k}" inputmode="decimal" value="${v != null ? v : ''}">
       <button class="x" data-optdel="${k}">✕</button>
     </div>
   </div>`;
+}
+
+/* alta/baja de campos opcionales, compartido por cardio y libre */
+function wireOpt() {
+  const box = $('#optBox');
+  box.oninput = e => {
+    const k = e.target.dataset.optin;
+    if (k) setOpt(k, e.target.value.trim() === '' ? null : e.target.value.trim());
+  };
+  box.onclick = e => {
+    const b = e.target.closest('[data-optdel]'); if (!b) return;
+    const k = b.dataset.optdel;
+    if (OPT_ROOT[k]) D[OPT_ROOT[k]] = null; else delete D.opt[k];
+    SCREENS.form();
+  };
+  $('#addOpt').onclick = () => {
+    const free = OPT[D.modality].filter(o => !hasOpt(o[0]));
+    if (!free.length) { toast('Ya agregaste todos los campos'); return; }
+    openSheet(`<h2>Agregar dato</h2>` + free.map(o =>
+      `<button class="li" data-k="${o[0]}" style="width:100%;text-align:left"><div class="nm">${o[1]}</div></button>`).join(''));
+    $('#sheet').querySelectorAll('[data-k]').forEach(b => b.onclick = () => {
+      setOpt(b.dataset.k, ''); closeSheet(); SCREENS.form();
+      const inp = document.querySelector(`[data-optin="${b.dataset.k}"]`); if (inp) inp.focus();
+    });
+  };
 }
 
 function paceCalc() {
@@ -538,23 +671,7 @@ function wireCardio() {
   $('#cHr').oninput   = e => { D.hrAvg = num(e.target.value); };
   const st = $('#cStyle'); if (st) st.onchange = e => { D.style = e.target.value; };
 
-  const box = $('#optBox');
-  box.oninput = e => { const k = e.target.dataset.optin; if (k) D.opt[k] = e.target.value.trim() === '' ? null : e.target.value.trim(); };
-  box.onclick = e => {
-    const b = e.target.closest('[data-optdel]'); if (!b) return;
-    delete D.opt[b.dataset.optdel]; SCREENS.form();
-  };
-
-  $('#addOpt').onclick = () => {
-    const free = OPT[D.modality].filter(o => D.opt[o[0]] == null || D.opt[o[0]] === '');
-    if (!free.length) { toast('Ya agregaste todos los campos'); return; }
-    openSheet(`<h2>Agregar dato</h2>` + free.map(o =>
-      `<button class="li" data-k="${o[0]}" style="width:100%;text-align:left"><div class="nm">${o[1]}</div></button>`).join(''));
-    $('#sheet').querySelectorAll('[data-k]').forEach(b => b.onclick = () => {
-      D.opt[b.dataset.k] = ''; closeSheet(); SCREENS.form();
-      const inp = document.querySelector(`[data-optin="${b.dataset.k}"]`); if (inp) inp.focus();
-    });
-  };
+  wireOpt();
 }
 function refreshPace() {
   const inputs = document.querySelectorAll('#view input[disabled]');
@@ -564,10 +681,12 @@ function refreshPace() {
 /* ---------------------------- libre ---------------------------- */
 
 function formLibre() {
+  if (!D.opt) D.opt = {};
+  const shown = OPT.libre.filter(o => hasOpt(o[0]));
   return `
     <div class="field">
       <label class="label">Actividad</label>
-      <input id="lName" value="${esc(D.name || '')}" placeholder="Fútbol, escalada, yoga...">
+      <input id="lName" value="${esc(D.name || '')}" placeholder="Caminata, escalada, fútbol...">
     </div>
     <div class="grid2">
       <div class="field" style="margin:0">
@@ -578,12 +697,16 @@ function formLibre() {
         <label class="label">Intensidad</label>
         <select id="lInt"><option value="">—</option>${['Suave','Moderada','Fuerte','Máxima'].map(x => `<option ${x === D.intensity ? 'selected' : ''}>${x}</option>`).join('')}</select>
       </div>
-    </div>`;
+    </div>
+    <div id="optBox">${shown.map(o => optHTML(o)).join('')}</div>
+    ${D.dist && D.durSec ? `<div style="color:var(--muted);font-size:13px;margin-top:8px">Ritmo: ${paceStr(D.durSec, D.dist)} /km</div>` : ''}
+    <button class="btn wide" style="margin-top:10px" id="addOpt">Agregar dato del Garmin</button>`;
 }
 function wireLibre() {
   $('#lName').oninput = e => { D.name = e.target.value; };
   $('#lDur').oninput = e => { D.durSec = parseTime(e.target.value); };
   $('#lInt').onchange = e => { D.intensity = e.target.value; };
+  wireOpt();
 }
 
 /* ---------------------------- peso corporal ---------------------------- */
@@ -664,7 +787,14 @@ function subline(x) {
     const sets = (x.entries || []).reduce((a, e) => a + e.sets.length, 0);
     return `${x.entries.length} ejercicios · ${sets} series${x.durSec ? ' · ' + fmtTime(x.durSec) : ''}`;
   }
-  if (x.modality === 'libre') return [x.intensity, x.notes].filter(Boolean).join(' · ') || 'Sin detalles';
+  if (x.modality === 'libre') {
+    const b = [];
+    if (x.durSec) b.push(fmtTime(x.durSec));
+    if (x.dist) b.push(round(x.dist, 2) + ' km');
+    if (x.hrAvg) b.push(x.hrAvg + ' ppm');
+    if (x.intensity) b.push(x.intensity);
+    return b.join(' · ') || 'Sin detalles';
+  }
   const bits = [];
   if (x.durSec) bits.push(fmtTime(x.durSec));
   const p = paceOf(x); if (p !== '—') bits.push(p);
@@ -702,7 +832,12 @@ function detailSheet(id) {
       .filter(r => r[1]);
     body = rows.map(r => `<div class="li"><div class="grow gp">${r[0]}</div><div class="nm num">${esc(r[1])}</div></div>`).join('');
   } else {
-    const rows = [['Duración', x.durSec ? fmtTime(x.durSec) : null], ['Intensidad', x.intensity || null]].filter(r => r[1]);
+    const rows = [['Duración', x.durSec ? fmtTime(x.durSec) : null], ['Intensidad', x.intensity || null],
+      ['Distancia', x.dist ? x.dist + ' km' : null],
+      ['Ritmo', x.dist && x.durSec ? paceStr(x.durSec, x.dist) + ' /km' : null],
+      ['FC promedio', x.hrAvg ? x.hrAvg + ' ppm' : null]]
+      .concat((OPT.libre || []).filter(o => !OPT_ROOT[o[0]]).map(o => [o[1], x.opt && x.opt[o[0]] ? x.opt[o[0]] + (o[2] ? ' ' + o[2] : '') : null]))
+      .filter(r => r[1]);
     body = rows.map(r => `<div class="li"><div class="grow gp">${r[0]}</div><div class="nm">${esc(r[1])}</div></div>`) .join('');
   }
 
@@ -893,10 +1028,12 @@ function viewLibre(list) {
   const byName = {};
   ls.forEach(x => { byName[x.name] = (byName[x.name] || 0) + 1; });
   CHARTS = [{ id: 'cl1', type: 'bar', data: weeklyCount(ls), color: MOD.libre.hex, fmt: v => v + ' ses.' }];
+  const dist = ls.reduce((a, x) => a + (x.dist || 0), 0);
   return `
     <div class="kpis">
       ${kpi(ls.length, 'Actividades')}
       ${kpi(fmtTime(time), 'Tiempo total')}
+      ${dist ? kpi(round(dist, 1), 'Distancia (km)') : ''}
     </div>
     <div class="card" style="margin-top:10px">
       <div style="font-weight:700;font-size:14.5px;margin-bottom:5px">Qué hiciste</div>
@@ -1009,11 +1146,11 @@ window.addEventListener('resize', () => { if (TAB === 'metricas') drawCharts(); 
 
 SCREENS.ajustes = function () {
   $('#hTitle').textContent = 'Ajustes';
-  $('#hSub').textContent = `${S.exercises.length} ejercicios · ${S.routines.length} rutinas · ${S.sessions.length} sesiones`;
+  $('#hSub').textContent = `${EX.length} ejercicios · ${S.routines.length} rutinas · ${S.sessions.length} sesiones`;
   $('#view').innerHTML = `
     <div class="card">
       <div style="font-weight:700;font-size:15px">Ejercicios</div>
-      <div style="font-size:12.5px;color:var(--muted);margin-top:2px;margin-bottom:10px">Tu biblioteca para las sesiones de pesas</div>
+      <div style="font-size:12.5px;color:var(--muted);margin-top:2px;margin-bottom:10px">${(window.EX_CATALOG || []).length} ejercicios de base + los tuyos</div>
       <button class="btn wide" id="aEx">Administrar ejercicios</button>
     </div>
     <div class="card">
@@ -1052,49 +1189,74 @@ SCREENS.ajustes = function () {
 
 /* ---- ejercicios ---- */
 function exerciseManager(q) {
-  q = q || '';
-  const ql = q.toLowerCase().trim();
-  const list = S.exercises.filter(e => e.name.toLowerCase().includes(ql))
-    .sort((a, b) => (a.group || '').localeCompare(b.group || '', 'es') || a.name.localeCompare(b.name, 'es'));
+  if (typeof q !== 'string') q = '';
+  const { total, list } = searchEx(q, 30);
+  const u = usageMap();
+  const hidden = (S.hidden || []).length;
   openSheet(`
     <h2>Ejercicios</h2>
-    <input id="emQ" placeholder="Buscar" value="${esc(q)}" autocomplete="off">
-    <button class="btn wide" style="margin-top:8px" id="emNew">Nuevo ejercicio</button>
+    <input id="emQ" placeholder="Buscar entre ${EX.length}" value="${esc(q)}" autocomplete="off">
+    <button class="btn wide" style="margin-top:8px" id="emNew">Crear ejercicio propio</button>
     <div style="margin-top:6px">${list.length ? list.map(e => `
       <div class="li">
-        <div class="grow"><div class="nm">${esc(e.name)}</div><div class="gp">${esc(e.group || 'Sin grupo')} · ${countUses(e.id)} series registradas</div></div>
+        <div class="grow"><div class="nm">${esc(e.name)}</div>
+        <div class="gp">${esc(e.group || 'Sin grupo')}${u[e.id] ? ' · usado ' + u[e.id] + '×' : ''}${e.cat ? '' : ' · propio'}</div></div>
         <button class="btn sm" data-edit="${e.id}">Editar</button>
-      </div>`).join('') : '<div class="empty">Nada encontrado.</div>'}</div>`);
-  $('#emQ').oninput = e => { const v = e.target.value; exerciseManager(v); const i = $('#emQ'); i.focus(); i.setSelectionRange(v.length, v.length); };
+      </div>`).join('') + (total > list.length
+        ? `<div style="color:var(--faint);font-size:12.5px;padding:10px 0;text-align:center">+${total - list.length} más. Escribí para afinar.</div>` : '')
+      : '<div class="empty">Nada encontrado.</div>'}</div>
+    ${hidden ? `<div class="hr"></div><button class="btn wide" id="emRestore">Mostrar los ${hidden} ejercicios ocultos</button>` : ''}`);
+
+  const inp = $('#emQ');
+  inp.oninput = e => {
+    const v = e.target.value;
+    exerciseManager(v);
+    const i = $('#emQ'); i.focus(); i.setSelectionRange(v.length, v.length);
+  };
   $('#emNew').onclick = () => exerciseEditor(null);
+  const rb = $('#emRestore');
+  if (rb) rb.onclick = () => { S.hidden = []; save(); toast('Ejercicios restaurados'); exerciseManager(q); };
   $('#sheet').querySelectorAll('[data-edit]').forEach(b => b.onclick = () => exerciseEditor(b.dataset.edit));
 }
+
 function countUses(id) {
   let n = 0;
   S.sessions.forEach(x => (x.entries || []).forEach(en => { if (en.exerciseId === id) n += en.sets.length; }));
   return n;
 }
+
 function exerciseEditor(id) {
-  const ex = S.exercises.find(e => e.id === id) || { name: '', group: '' };
+  const ex = id ? (exLookup(id) || { name: '', group: '' }) : { name: '', group: '' };
+  const isCat = id && String(id).indexOf('c:') === 0;
   openSheet(`
     <h2>${id ? 'Editar ejercicio' : 'Nuevo ejercicio'}</h2>
-    <div class="field"><label class="label">Nombre</label><input id="eeN" value="${esc(ex.name)}" placeholder="Press banca"></div>
+    <div class="field"><label class="label">Nombre</label><input id="eeN" value="${esc(ex.name)}" placeholder="Press de banca con barra"></div>
     <div class="field"><label class="label">Grupo muscular</label>
       <select id="eeG"><option value="">Sin grupo</option>${GROUPS.map(g => `<option ${g === ex.group ? 'selected' : ''}>${g}</option>`).join('')}</select></div>
+    ${id ? `<div style="color:var(--faint);font-size:12.5px;margin-top:8px">${countUses(id)} series registradas${isCat ? ' · es del catálogo, el nombre nuevo se aplica solo para vos' : ''}</div>` : ''}
     <button class="btn primary wide" style="margin-top:12px;--accent:var(--pesas)" id="eeS">Guardar</button>
-    ${id ? '<button class="btn wide danger" style="margin-top:8px" id="eeD">Borrar ejercicio</button>' : ''}`);
+    ${id ? `<button class="btn wide danger" style="margin-top:8px" id="eeD">${isCat ? 'Ocultar de la biblioteca' : 'Borrar ejercicio'}</button>` : ''}`);
+
   $('#eeS').onclick = () => {
-    const name = $('#eeN').value.trim();
+    const name = $('#eeN').value.trim(), group = $('#eeG').value;
     if (!name) { toast('Falta el nombre'); return; }
-    if (id) { const e = S.exercises.find(x => x.id === id); e.name = name; e.group = $('#eeG').value; }
-    else S.exercises.push({ id: uid(), name, group: $('#eeG').value });
-    saveNow(); toast('Guardado'); exerciseManager('');
+    if (!id) S.custom.push({ id: uid(), name, group });
+    else if (isCat) S.overrides[id] = { name, group };
+    else { const c = S.custom.find(x => x.id === id); if (c) { c.name = name; c.group = group; } }
+    save(); toast('Guardado'); exerciseManager('');
   };
-  if (id) $('#eeD').onclick = () => confirmAsk(`¿Borrar “${ex.name}”? Las sesiones viejas lo van a mostrar como borrado.`, 'Borrar', () => {
-    S.exercises = S.exercises.filter(e => e.id !== id);
-    S.routines.forEach(r => r.exerciseIds = r.exerciseIds.filter(x => x !== id));
-    saveNow(); toast('Ejercicio borrado'); exerciseManager('');
-  });
+
+  if (id) $('#eeD').onclick = () => confirmAsk(
+    isCat ? `“${ex.name}” se oculta del buscador. Las sesiones viejas lo siguen mostrando.`
+          : `¿Borrar “${ex.name}”? Las sesiones viejas lo van a mostrar como borrado.`,
+    isCat ? 'Ocultar' : 'Borrar', () => {
+      if (isCat) { S.hidden = (S.hidden || []).concat([id]); }
+      else {
+        S.custom = S.custom.filter(e => e.id !== id);
+        S.routines.forEach(r => r.exerciseIds = r.exerciseIds.filter(x => x !== id));
+      }
+      save(); toast(isCat ? 'Ejercicio oculto' : 'Ejercicio borrado'); exerciseManager('');
+    });
 }
 
 /* ---- rutinas ---- */
@@ -1116,7 +1278,6 @@ function routineEditor(id) {
     const r = S.routines.find(x => x.id === id);
     RDRAFT = r ? JSON.parse(JSON.stringify(r)) : { id: null, name: '', exerciseIds: [] };
   }
-  const avail = S.exercises.slice().sort((a, b) => a.name.localeCompare(b.name, 'es'));
   openSheet(`
     <h2>${id ? 'Editar rutina' : 'Nueva rutina'}</h2>
     <div class="field"><label class="label">Nombre</label><input id="reN" value="${esc(RDRAFT.name)}" placeholder="Push, Pull, Legs..."></div>
@@ -1126,21 +1287,24 @@ function routineEditor(id) {
       <div class="li">
         <div class="grow nm">${i + 1}. ${esc(exName(eid))}</div>
         <button class="x" data-up="${i}">↑</button>
+        <button class="x" data-down="${i}">↓</button>
         <button class="x" data-rm="${i}">✕</button>
       </div>`).join('') : '<div style="color:var(--faint);font-size:13.5px;padding:8px 0">Todavía ninguno</div>'}
-    <div class="field" style="margin-top:10px">
-      <label class="label">Agregar</label>
-      <select id="reAdd"><option value="">Elegí un ejercicio</option>${avail.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('')}</select>
-    </div>
+    <button class="btn wide" style="margin-top:10px" id="reAdd">Agregar ejercicio</button>
     <button class="btn primary wide" style="margin-top:12px;--accent:var(--pesas)" id="reS">Guardar rutina</button>
     ${id ? '<button class="btn wide danger" style="margin-top:8px" id="reD">Borrar rutina</button>' : ''}`);
 
   $('#reN').oninput = e => { RDRAFT.name = e.target.value; };
-  $('#reAdd').onchange = e => { if (e.target.value) { RDRAFT.exerciseIds.push(e.target.value); routineEditor(id); } };
+  $('#reAdd').onclick = () => { EQ = ''; exSearchSheet('Agregar a la rutina', eid => { RDRAFT.exerciseIds.push(eid); routineEditor(id); }); };
   $('#sheet').querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { RDRAFT.exerciseIds.splice(+b.dataset.rm, 1); routineEditor(id); });
   $('#sheet').querySelectorAll('[data-up]').forEach(b => b.onclick = () => {
     const i = +b.dataset.up; if (i === 0) return;
-    const a = RDRAFT.exerciseIds;[a[i - 1], a[i]] = [a[i], a[i - 1]]; routineEditor(id);
+    const a = RDRAFT.exerciseIds; [a[i - 1], a[i]] = [a[i], a[i - 1]]; routineEditor(id);
+  });
+  $('#sheet').querySelectorAll('[data-down]').forEach(b => b.onclick = () => {
+    const i = +b.dataset.down, a = RDRAFT.exerciseIds;
+    if (i >= a.length - 1) return;
+    [a[i + 1], a[i]] = [a[i], a[i + 1]]; routineEditor(id);
   });
   $('#reS').onclick = () => {
     if (!RDRAFT.name.trim()) { toast('Falta el nombre'); return; }
@@ -1190,7 +1354,7 @@ function importJson(e) {
 }
 
 function exportXlsx() {
-  if (typeof XLSX === 'undefined') { toast('Necesitás conexión para exportar a Excel'); return; }
+  if (typeof XLSX === 'undefined') { toast('Recargá la app y probá de nuevo'); return; }
   const wb = XLSX.utils.book_new();
   const add = (rows, name) => {
     if (!rows.length) return;
@@ -1240,10 +1404,18 @@ function exportXlsx() {
   });
 
   /* Libre y peso */
-  add(ord.filter(x => x.modality === 'libre').map(x => ({
-    Fecha: x.date, Actividad: x.name || '', 'Duración': x.durSec ? fmtTime(x.durSec) : '',
-    Intensidad: x.intensity || '', Notas: x.notes || ''
-  })), 'Libre');
+  add(ord.filter(x => x.modality === 'libre').map(x => {
+    const r = {
+      Fecha: x.date, Actividad: x.name || '', 'Duración': x.durSec ? fmtTime(x.durSec) : '',
+      Intensidad: x.intensity || '',
+      'Distancia (km)': x.dist != null ? x.dist : '',
+      'Ritmo /km': x.dist && x.durSec ? paceStr(x.durSec, x.dist) : '',
+      'FC prom': x.hrAvg || ''
+    };
+    OPT.libre.filter(o => !OPT_ROOT[o[0]]).forEach(o => { r[o[1]] = (x.opt && x.opt[o[0]]) || ''; });
+    r.Notas = x.notes || '';
+    return r;
+  }), 'Libre');
   add(S.weights.slice().sort((a, b) => a.date < b.date ? -1 : 1).map(w => ({ Fecha: w.date, 'Peso (kg)': w.kg })), 'Peso corporal');
 
   if (!wb.SheetNames.length) { toast('Todavía no hay nada para exportar'); return; }
@@ -1252,6 +1424,237 @@ function exportXlsx() {
     toast('Excel exportado');
   } catch (err) { toast('No se pudo exportar'); }
 }
+
+
+/* ==================================================================
+   PANTALLA: COACH
+   Dos capas: análisis de tus propios datos (siempre, offline) y
+   un chat con IA opcional si cargás tu API key de Anthropic.
+   ================================================================== */
+
+const DAY = 864e5;
+const daysAgo = iso => Math.round((new Date(todayISO()) - new Date(iso)) / DAY);
+const e1rm = st => (st.w != null && st.r != null) ? st.w * (1 + st.r / 30) : 0;
+
+/* historial por ejercicio: una entrada por sesión, de la más nueva a la más vieja */
+function exHistory(id) {
+  return S.sessions.filter(x => x.modality === 'pesas' && (x.entries || []).some(e => e.exerciseId === id))
+    .map(x => {
+      const sets = x.entries.filter(e => e.exerciseId === id).reduce((a, e) => a.concat(e.sets), [])
+        .filter(st => st.w != null && st.r != null);
+      if (!sets.length) return null;
+      const top = sets.reduce((a, b) => e1rm(b) > e1rm(a) ? b : a);
+      const topW = Math.max.apply(null, sets.map(st => st.w));
+      const atTop = sets.filter(st => st.w === topW);
+      return { date: x.date, sets, top, e1: e1rm(top), topW,
+        minRepsAtTop: Math.min.apply(null, atTop.map(st => st.r)), nSets: sets.length };
+    }).filter(Boolean).sort((a, b) => a.date < b.date ? 1 : -1);
+}
+
+function alternativesFor(id, n) {
+  const g = exGroup(id), used = new Set();
+  S.sessions.filter(x => x.date >= todayISO(new Date(Date.now() - 30 * DAY)))
+    .forEach(x => (x.entries || []).forEach(e => used.add(e.exerciseId)));
+  const base = (exLookup(id) || {}).name || '';
+  const stem = norm(base).split(' ').slice(0, 2).join(' ');
+  return EX.filter(e => e.group === g && !used.has(e.id) && e.s.indexOf(stem) !== 0)
+    .sort(() => Math.random() - .5).slice(0, n || 2).map(e => e.name);
+}
+
+/* ---------- reglas ---------- */
+function advicePesas() {
+  const out = [];
+  const recent = S.sessions.filter(x => x.modality === 'pesas' && daysAgo(x.date) <= 45);
+  const ids = [...new Set(recent.reduce((a, x) => a.concat((x.entries || []).map(e => e.exerciseId)), []))];
+
+  ids.forEach(id => {
+    const h = exHistory(id);
+    if (!h.length) return;
+    const name = exName(id), step = STEP[exGroup(id)] || 2.5;
+    const last = h[0];
+
+    if (last.minRepsAtTop >= 12 && last.topW > 0) {
+      out.push({ lvl: 'up', t: `Subí el peso en ${name}`,
+        d: `La última vez hiciste todas las series con ${last.topW} kg a ${last.minRepsAtTop}+ reps. Probá ${round(last.topW + step, 2)} kg y volvé a 8 reps.` });
+      return;
+    }
+    if (h.length >= 3) {
+      const [a, b, c] = h;
+      const stalled = a.e1 <= b.e1 * 1.01 && b.e1 <= c.e1 * 1.01;
+      if (stalled && daysAgo(c.date) <= 45) {
+        const alt = alternativesFor(id, 2);
+        out.push({ lvl: 'stall', t: `${name} está estancado`,
+          d: `Tres sesiones sin mejorar (1RM estimado ~${Math.round(a.e1)} kg). Dos caminos: bajá un 10% el peso y subí de a poco otra vez, o cambiá de variante unas semanas${alt.length ? ' — probá ' + alt.join(' o ') : ''}.` });
+        return;
+      }
+    }
+    if (h.length >= 2 && h[0].e1 > h[1].e1 * 1.02) {
+      out.push({ lvl: 'ok', t: `${name} viene subiendo`, d: `1RM estimado pasó de ${Math.round(h[1].e1)} a ${Math.round(h[0].e1)} kg. Mantené el esquema, está funcionando.` });
+    }
+  });
+
+  /* ejercicios de rutina abandonados */
+  const inRoutines = [...new Set(S.routines.reduce((a, r) => a.concat(r.exerciseIds), []))];
+  inRoutines.forEach(id => {
+    const h = exHistory(id);
+    if (!h.length) return;
+    const d = daysAgo(h[0].date);
+    if (d >= 21 && d <= 120) out.push({ lvl: 'warn', t: `Hace ${d} días que no hacés ${exName(id)}`, d: 'Está en una de tus rutinas. Si lo dejaste a propósito, sacalo de la rutina para que el diario refleje lo que hacés.' });
+  });
+
+  /* volumen semanal por grupo */
+  const wk = S.sessions.filter(x => x.modality === 'pesas' && daysAgo(x.date) <= 7);
+  const byGroup = {};
+  wk.forEach(x => (x.entries || []).forEach(e => {
+    const g = exGroup(e.exerciseId) || 'Sin grupo';
+    byGroup[g] = (byGroup[g] || 0) + e.sets.length;
+  }));
+  Object.keys(byGroup).forEach(g => {
+    if (g === 'Sin grupo' || g === 'Movilidad') return;
+    if (byGroup[g] > 25) out.push({ lvl: 'warn', t: `Mucho volumen en ${g}`, d: `${byGroup[g]} series en 7 días. Arriba de ~22 series semanales por grupo la recuperación suele ser el cuello de botella.` });
+  });
+  const trained = Object.keys(byGroup);
+  if (trained.length >= 3) {
+    const low = trained.filter(g => byGroup[g] > 0 && byGroup[g] < 6 && g !== 'Movilidad' && g !== 'Sin grupo');
+    if (low.length) out.push({ lvl: 'info', t: `Poco volumen en ${low.join(', ')}`, d: 'Menos de 6 series semanales alcanza para mantener, pero queda corto para crecer. El rango típico es 10 a 20.' });
+  }
+  return out;
+}
+
+function adviceCardio() {
+  const out = [];
+  CARDIO.concat(['libre']).forEach(m => {
+    const wk = S.sessions.filter(x => x.modality === m && daysAgo(x.date) <= 7 && x.dist);
+    const prev = S.sessions.filter(x => x.modality === m && daysAgo(x.date) > 7 && daysAgo(x.date) <= 14 && x.dist);
+    if (!wk.length || !prev.length) return;
+    const a = wk.reduce((t, x) => t + x.dist, 0), b = prev.reduce((t, x) => t + x.dist, 0);
+    const u = m === 'natacion' ? 'm' : 'km';
+    if (a > b * 1.25) out.push({ lvl: 'warn', t: `Saltaste mucho el volumen de ${MOD[m].nm.toLowerCase()}`,
+      d: `${round(a, 1)} ${u} esta semana contra ${round(b, 1)} la anterior (+${Math.round((a / b - 1) * 100)}%). Subir más del 10% semanal es la forma clásica de terminar lesionado.` });
+    if (a < b * .6) out.push({ lvl: 'info', t: `Bajó el volumen de ${MOD[m].nm.toLowerCase()}`, d: `De ${round(b, 1)} a ${round(a, 1)} ${u}. Si no fue una semana de descarga planificada, revisá qué pasó.` });
+  });
+
+  /* distribución de intensidad en running */
+  const runs = S.sessions.filter(x => x.modality === 'running' && x.hrAvg && daysAgo(x.date) <= 28);
+  if (runs.length >= 4) {
+    const maxHr = Math.max.apply(null, S.sessions.filter(x => x.hrAvg).map(x => x.hrAvg));
+    const duras = runs.filter(x => x.hrAvg > maxHr * .88).length;
+    const pct = Math.round(duras / runs.length * 100);
+    if (pct > 40) out.push({ lvl: 'warn', t: 'Corrés casi siempre fuerte',
+      d: `${pct}% de tus salidas del último mes fueron a FC alta. El reparto que mejor funciona es cerca de 80% suave y 20% fuerte: la mayoría de los kilómetros deberían dejarte charlar.` });
+    else if (pct < 5 && runs.length >= 6) out.push({ lvl: 'info', t: 'Todo a ritmo cómodo',
+      d: 'Ninguna salida intensa en el último mes. Una sesión semanal de series o un tramo a ritmo fuerte es lo que mueve el techo aeróbico.' });
+  }
+  return out;
+}
+
+function adviceGeneral() {
+  const out = [];
+  const dates = [...new Set(S.sessions.map(x => x.date))].sort().reverse();
+  if (!dates.length) return out;
+
+  /* días seguidos sin descanso */
+  let streak = 0, cur = new Date(todayISO());
+  if (dates[0] === todayISO() || daysAgo(dates[0]) === 1) {
+    let d = new Date(dates[0]);
+    while (dates.indexOf(todayISO(d)) >= 0 && streak < 30) { streak++; d.setDate(d.getDate() - 1); }
+  }
+  if (streak >= 7) out.push({ lvl: 'warn', t: `${streak} días seguidos entrenando`, d: 'El progreso pasa en la recuperación. Un día off completo, o al menos uno muy suave, te va a hacer rendir más la semana que viene.' });
+
+  const d0 = daysAgo(dates[0]);
+  if (d0 >= 5) out.push({ lvl: 'info', t: `Hace ${d0} días que no registrás nada`, d: 'Volver con algo corto y fácil funciona mejor que esperar el día perfecto para la sesión completa.' });
+
+  /* peso corporal */
+  const w = S.weights.slice().sort((a, b) => a.date < b.date ? 1 : -1);
+  if (w.length >= 2) {
+    const recientes = w.filter(x => daysAgo(x.date) <= 28);
+    if (recientes.length >= 2) {
+      const a = recientes[0], b = recientes[recientes.length - 1];
+      const dias = Math.max(1, daysAgo(b.date) - daysAgo(a.date));
+      const porSemana = (a.kg - b.kg) / dias * 7;
+      if (porSemana < -0.01 * a.kg) out.push({ lvl: 'warn', t: 'Estás bajando rápido',
+        d: `${round(Math.abs(porSemana), 2)} kg por semana. Arriba del 1% del peso corporal semanal se pierde más músculo del necesario y la fuerza lo acusa.` });
+      else if (Math.abs(porSemana) < 0.05 && recientes.length >= 3) out.push({ lvl: 'info', t: 'Peso estable',
+        d: `${a.kg} kg, sin cambios en el último mes. Si buscabas subir o bajar, el punto de partida es ajustar comida, no entrenamiento.` });
+    }
+  } else if (!w.length) {
+    out.push({ lvl: 'info', t: 'No registrás peso corporal', d: 'Un dato por semana alcanza para leer las tendencias y saber si la fuerza sube por carga o por peso.' });
+  }
+  return out;
+}
+
+function allAdvice() {
+  const rank = { up: 0, stall: 1, warn: 2, info: 3, ok: 4 };
+  return advicePesas().concat(adviceCardio(), adviceGeneral())
+    .sort((a, b) => rank[a.lvl] - rank[b.lvl]);
+}
+
+const LVL = {
+  up:    { c: '#45C8A0', n: 'Subir carga' },
+  stall: { c: '#E8A33D', n: 'Estancado' },
+  warn:  { c: '#FF7A59', n: 'Atención' },
+  info:  { c: '#4FA8E8', n: 'Dato' },
+  ok:    { c: '#45C8A0', n: 'Va bien' }
+};
+
+/* ---------- pantalla ---------- */
+/* ---------- próxima sesión de pesas, con pesos ya calculados ---------- */
+function nextSession() {
+  if (!S.routines.length) return null;
+  const lastOf = r => {
+    const ses = S.sessions.filter(x => x.modality === 'pesas' && (x.routineId === r.id || x.name === r.name));
+    return ses.length ? ses.sort((a, b) => a.date < b.date ? 1 : -1)[0].date : '0000-00-00';
+  };
+  const r = S.routines.slice().sort((a, b) => lastOf(a) < lastOf(b) ? -1 : 1)[0];
+  const last = lastOf(r);
+  const items = r.exerciseIds.slice(0, 10).map(id => {
+    const h = exHistory(id), step = STEP[exGroup(id)] || 2.5;
+    if (!h.length) return { n: exName(id), s: 'Primera vez: buscá un peso que te deje 2 reps en el tanque.' };
+    const l = h[0];
+    if (l.minRepsAtTop >= 12) return { n: exName(id), s: `${round(l.topW + step, 2)} kg × 8 — subiste de ${l.topW} kg`, up: true };
+    return { n: exName(id), s: `${l.topW} kg × ${l.minRepsAtTop + 1} — la última fueron ${l.minRepsAtTop} reps` };
+  });
+  return { routine: r, last, items };
+}
+
+SCREENS.coach = function () {
+  $('#hTitle').textContent = 'Coach';
+  $('#hSub').textContent = 'Todo calculado con tus propios datos';
+  const list = allAdvice();
+  const nx = nextSession();
+
+  $('#view').innerHTML = `
+    ${S.sessions.length < 2 ? '<div class="empty">Cargá unas cuantas sesiones y acá vas a ver qué subir, qué cambiar y qué frenar.</div>' : ''}
+    ${list.map(a => `
+      <div class="card" style="border-left:3px solid ${LVL[a.lvl].c}">
+        <div class="tag" style="background:${LVL[a.lvl].c}22;color:${LVL[a.lvl].c};display:inline-block">${LVL[a.lvl].n}</div>
+        <div style="font-weight:700;font-size:15px;margin-top:7px">${esc(a.t)}</div>
+        <div style="font-size:13.5px;color:var(--muted);line-height:1.55;margin-top:4px">${esc(a.d)}</div>
+      </div>`).join('')}
+    ${nx ? `
+    <div class="card" style="margin-top:14px">
+      <div style="font-weight:700;font-size:15px">Te toca ${esc(nx.routine.name)}</div>
+      <div style="font-size:12.5px;color:var(--muted);margin-top:2px">
+        ${nx.last === '0000-00-00' ? 'Todavía no la hiciste' : 'La última vez fue ' + fmtDate(nx.last).toLowerCase()} · es la rutina que más tiempo lleva sin tocar
+      </div>
+      <div class="hr"></div>
+      ${nx.items.map(i => `<div class="li">
+          <div class="grow"><div class="nm">${esc(i.n)}</div><div class="gp">${esc(i.s)}</div></div>
+          ${i.up ? '<div class="tag" style="background:#45C8A022;color:#45C8A0">subir</div>' : ''}
+        </div>`).join('')}
+      <button class="btn primary wide" style="margin-top:12px;--accent:var(--pesas)" id="cStart">Empezar esta sesión</button>
+    </div>` : ''}
+    <div style="height:10px"></div>`;
+
+  const b = $('#cStart');
+  if (b) b.onclick = () => {
+    openForm('pesas', null);
+    D.routineId = nx.routine.id;
+    D.name = nx.routine.name;
+    nx.routine.exerciseIds.forEach(id => D.entries.push({ exerciseId: id, sets: [{ w: null, r: null }] }));
+    SCREENS.form();
+  };
+};
 
 /* ==================================================================
    INICIO

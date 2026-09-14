@@ -26,15 +26,35 @@ Reemplazá el contenido del repo por estos archivos y pusheá. Vercel redeploya 
 2. Botón compartir → "Agregar a inicio".
 3. Aparece el ícono del bíceps 💪🏼 y se abre en pantalla completa, sin barra de Safari.
 
+## Coach
+
+La pestaña Coach lee tus propias sesiones y saca conclusiones sin internet: cuándo subir carga
+(3 series a 12+ reps con el mismo peso), cuándo un ejercicio está estancado (3 sesiones sin mejorar
+el 1RM estimado), saltos bruscos de volumen en cardio, exceso de series por grupo muscular,
+semanas sin descanso y bajadas de peso demasiado rápidas.
+
+Abajo te arma la próxima sesión: elige la rutina que más tiempo lleva sin tocar y calcula el peso y
+las reps de cada ejercicio a partir de la última vez que lo hiciste. El botón la abre ya precargada.
+
+Todo el coach corre en el teléfono. No hay API, no hay cuenta y no manda nada a ningún lado.
+
 ## Estructura
 
 ```
 public/index.html   shell + estilos
 public/app.js       toda la lógica
+public/catalog.js   1.266 ejercicios con grupo muscular
+public/vendor/      SheetJS local, para exportar a Excel sin conexión
+public/sw.js        caché offline
 public/manifest.json
 public/apple-touch-icon.png   ícono del bíceps (180px)
 vercel.json
 ```
+
+## Funciona sin señal
+
+Después de la primera visita queda todo en caché: la app abre y guarda entrenamientos en el subsuelo
+del gym sin datos. La exportación a Excel también funciona offline.
 
 ## Cuidado con los datos
 
@@ -46,3 +66,6 @@ Ajustes → **Descargar backup (.json)** cada tanto, y **Restaurar desde backup*
 - Tiempos: `45:30` (mm:ss), `1:05:20` (h:mm:ss) o `45` (minutos sueltos).
 - Distancia: km en running y bici, metros en natación.
 - El ritmo se calcula solo (min/km, min/100m o km/h según la modalidad).
+- En actividad libre podés sumar distancia, FC, pasos, desnivel y demás con "Agregar dato del Garmin".
+- El buscador de ejercicios ignora tildes y busca por palabras sueltas: "press incl mancuer" encuentra
+  "Press de banca inclinado con mancuernas". Si no existe, lo creás desde el mismo buscador.
