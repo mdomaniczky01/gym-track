@@ -56,6 +56,12 @@ vercel.json
 Después de la primera visita queda todo en caché: la app abre y guarda entrenamientos en el subsuelo
 del gym sin datos. La exportación a Excel también funciona offline.
 
+## Volver atrás
+
+El gesto de deslizar desde el borde y el botón atrás del sistema cierran la capa abierta
+(primero la hoja, después el formulario) en vez de salir de la app. Además hay una flecha
+arriba a la izquierda en los formularios y una ✕ en las hojas.
+
 ## Cuidado con los datos
 
 Los datos viven solo en ese Safari. Si borrás el historial y datos de sitios, se van.
@@ -63,7 +69,8 @@ Ajustes → **Descargar backup (.json)** cada tanto, y **Restaurar desde backup*
 
 ## Formato de los campos
 
-- Tiempos: `45:30` (mm:ss), `1:05:20` (h:mm:ss) o `45` (minutos sueltos).
+- Tiempos: tres casillas separadas (horas / min / seg), todas con teclado numérico.
+  Para 45:30 va 45 en min y 30 en seg; las horas se dejan vacías.
 - Distancia: km en running y bici, metros en natación.
 - El ritmo se calcula solo (min/km, min/100m o km/h según la modalidad).
 - En actividad libre podés sumar distancia, FC, pasos, desnivel y demás con "Agregar dato del Garmin".

@@ -177,6 +177,15 @@ const saveNow = save;
 /* ============================ utilidades ============================ */
 
 const $ = s => document.querySelector(s);
+
+/* memoria del scroll horizontal de las cintas de filtros */
+const STRIP = {};
+function keepStrip(key) {
+  const el = $('.mods');
+  if (!el) return;
+  el.scrollLeft = STRIP[key] || 0;
+  el.addEventListener('scroll', () => { STRIP[key] = el.scrollLeft; }, { passive: true });
+}
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const num = v => { const n = parseFloat(String(v).replace(',', '.')); return isFinite(n) ? n : null; };
 const round = (n, d = 1) => { const p = Math.pow(10, d); return Math.round(n * p) / p; };
@@ -197,7 +206,37 @@ function fmtDate(iso) {
   return `${dias[dt.getDay()]} ${d} ${mes[m - 1]}`;
 }
 
-/* "45:30" | "1:05:20" | "45" (min) -> segundos */
+/* campo de tiempo: h / min / seg, todo con teclado numérico */
+function timeHTML(id, sec, label) {
+  const t = sec || 0;
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sg = Math.round(t % 60);
+  const box = (k, v, cap, ph) => `<div>
+      <input class="tin" id="${id}${k}" inputmode="numeric" pattern="[0-9]*" maxlength="2"
+             value="${t ? v : ''}" placeholder="${ph}">
+      <div class="tcap">${cap}</div>
+    </div>`;
+  return `<div class="field">
+    <label class="label">${label}</label>
+    <div class="tgrid">
+      ${box('H', h, 'horas', '0')}
+      ${box('M', m, 'min', '00')}
+      ${box('S', sg, 'seg', '00')}
+    </div>
+  </div>`;
+}
+function readTime(id) {
+  const v = k => { const n = parseInt(($('#' + id + k) || {}).value, 10); return isFinite(n) ? n : 0; };
+  const t = v('H') * 3600 + v('M') * 60 + v('S');
+  return t > 0 ? t : null;
+}
+function wireTime(id, onChange) {
+  ['H', 'M', 'S'].forEach(k => {
+    const el = $('#' + id + k);
+    if (el) el.oninput = () => onChange(readTime(id));
+  });
+}
+
+/* "45:30" | "1:05:20" | "45" (min) -> segundos (para datos viejos) */
 function parseTime(str) {
   if (!str) return null;
   const s = String(str).trim().replace(',', '.');
@@ -254,16 +293,64 @@ function toast(msg) {
   toastTimer = setTimeout(() => t.classList.remove('on'), 2100);
 }
 
+/* Navegación hacia atrás
+   La app mantiene una pila de capas abiertas (hoja, formulario). Mientras
+   haya alguna, deja una entrada marcada en el historial: así el gesto de
+   volver atrás del iPhone cierra una capa en vez de salir de la app.
+   La sincronización con el historial se hace diferida, porque cerrar una
+   capa y abrir otra en el mismo gesto es normal y no debería tocar nada. */
+const NAVS = [];
+let HIST_MARK = false, SKIP_POP = 0, histTimer = null;
+
+/* abrir marca el historial al instante; cerrar lo libera diferido, para que
+   cerrar una capa y abrir otra en el mismo gesto no toque nada */
+function markHist() {
+  if (HIST_MARK) return;
+  HIST_MARK = true;
+  try { history.pushState({ entreno: 1 }, ''); } catch (e) { HIST_MARK = false; }
+}
+function syncHist() {
+  clearTimeout(histTimer);
+  histTimer = setTimeout(() => {
+    if (NAVS.length) { markHist(); return; }
+    if (HIST_MARK) {
+      HIST_MARK = false; SKIP_POP++;
+      try { history.back(); } catch (e) { SKIP_POP--; }
+    }
+  }, 0);
+}
+function pushNav(kind) { NAVS.push(kind); markHist(); }
+function dropNav(kind) {
+  const i = NAVS.lastIndexOf(kind);
+  if (i >= 0) NAVS.splice(i, 1);
+  syncHist();
+}
+window.addEventListener('popstate', () => {
+  if (SKIP_POP > 0) { SKIP_POP--; return; }
+  HIST_MARK = false;
+  const kind = NAVS.pop();
+  if (kind === 'sheet') realCloseSheet();
+  else if (kind === 'form') realLeaveForm();
+  if (NAVS.length) markHist();
+});
+
 function openSheet(html) {
   const sh = $('#sheet');
-  sh.innerHTML = '<div class="bar"></div>' + html;
+  const yaAbierta = sh.classList.contains('on');
+  sh.innerHTML = '<div class="bar"></div><button class="sheetx" id="sheetX" aria-label="Cerrar">✕</button>' + html;
   sh.scrollTop = 0;
   $('#veil').classList.add('on');
   requestAnimationFrame(() => sh.classList.add('on'));
+  $('#sheetX').onclick = closeSheet;
+  if (!yaAbierta) pushNav('sheet');
 }
-function closeSheet() {
+function realCloseSheet() {
   $('#sheet').classList.remove('on');
   $('#veil').classList.remove('on');
+}
+function closeSheet() {
+  realCloseSheet();
+  dropNav('sheet');
 }
 $('#veil').addEventListener('click', closeSheet);
 
@@ -283,6 +370,7 @@ const SCREENS = {};
 
 function go(tab) {
   TAB = tab;
+  const bk = $('#back'); if (bk) bk.classList.add('hide');
   document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
   render();
   window.scrollTo(0, 0);
@@ -380,9 +468,11 @@ function newDraft(m) {
   return Object.assign(base, { dist: null, durSec: null, hrAvg: null, opt: {}, style: '', laps: [] });
 }
 
+let PREV_TAB = 'hoy';
 function openForm(m, session) {
   D = session ? JSON.parse(JSON.stringify(session)) : newDraft(m);
   EDIT_ID = session ? session.id : null;
+  if (TAB !== 'form') { PREV_TAB = TAB; pushNav('form'); }
   TAB = 'form';
   document.querySelectorAll('#nav button').forEach(b => b.classList.remove('on'));
   SCREENS.form();
@@ -393,6 +483,9 @@ SCREENS.form = function () {
   const m = D.modality, C = MOD[m];
   $('#hTitle').textContent = (EDIT_ID ? 'Editar ' : '') + C.nm;
   $('#hSub').textContent = EDIT_ID ? 'Cambiá lo que necesites y guardá' : 'Los campos vacíos no se guardan';
+  const bk = $('#back');
+  bk.classList.remove('hide');
+  bk.onclick = leaveForm;
   document.body.style.setProperty('--accent', C.hex);
 
   const body = m === 'pesas' ? formPesas() : m === 'libre' ? formLibre() : formCardio();
@@ -425,10 +518,16 @@ SCREENS.form = function () {
   else wireCardio();
 };
 
-function leaveForm() {
+function realLeaveForm() {
   D = null; EDIT_ID = null;
+  realCloseSheet();
   document.body.style.removeProperty('--accent');
-  go(TAB === 'form' ? 'diario' : TAB);
+  go(PREV_TAB === 'form' ? 'diario' : PREV_TAB);
+}
+function leaveForm() {
+  realLeaveForm();
+  dropNav('sheet');
+  dropNav('form');
 }
 
 function saveForm() {
@@ -477,10 +576,7 @@ function formPesas() {
     <div class="hr"></div>
     <div id="exList">${D.entries.map(entryHTML).join('') || '<div class="empty">Todavía no agregaste ejercicios.</div>'}</div>
     <button class="btn wide" id="addEx">Agregar ejercicio</button>
-    <div class="field" style="margin-top:12px">
-      <label class="label">Duración total (opcional)</label>
-      <input id="fDur" value="${D.durSec ? fmtTime(D.durSec) : ''}" placeholder="mm:ss o h:mm:ss" inputmode="numeric">
-    </div>`;
+    ${timeHTML('fDur', D.durSec, 'Duración total (opcional)')}`;
 }
 
 function entryHTML(en, i) {
@@ -517,7 +613,7 @@ function wirePesas() {
     SCREENS.form();
   };
   $('#fName').oninput = e => { D.name = e.target.value; };
-  $('#fDur').oninput = e => { D.durSec = parseTime(e.target.value); };
+  wireTime('fDur', v => { D.durSec = v; });
   $('#addEx').onclick = pickExercise;
 
   const list = $('#exList');
@@ -598,20 +694,12 @@ function formCardio() {
         <input id="cDist" inputmode="decimal" value="${D.dist != null ? D.dist : ''}" placeholder="—">
       </div>
       <div class="field" style="margin:0">
-        <label class="label">Tiempo</label>
-        <input id="cDur" inputmode="numeric" value="${D.durSec ? fmtTime(D.durSec) : ''}" placeholder="mm:ss">
-      </div>
-    </div>
-    <div class="grid2" style="margin-top:11px">
-      <div class="field" style="margin:0">
         <label class="label">FC promedio (ppm)</label>
         <input id="cHr" inputmode="numeric" value="${D.hrAvg != null ? D.hrAvg : ''}" placeholder="—">
       </div>
-      <div class="field" style="margin:0">
-        <label class="label">Ritmo</label>
-        <input value="${paceCalc()}" disabled style="opacity:.75">
-      </div>
     </div>
+    ${timeHTML('cDur', D.durSec, 'Tiempo')}
+    <div class="paceout">${m === 'bici' ? 'Velocidad' : 'Ritmo'}: <b id="paceOut">${paceCalc()}</b></div>
     ${isSwim ? `
     <div class="field">
       <label class="label">Estilo</label>
@@ -667,15 +755,15 @@ function paceCalc() {
 
 function wireCardio() {
   $('#cDist').oninput = e => { D.dist = num(e.target.value); refreshPace(); };
-  $('#cDur').oninput  = e => { D.durSec = parseTime(e.target.value); refreshPace(); };
+  wireTime('cDur', v => { D.durSec = v; refreshPace(); });
   $('#cHr').oninput   = e => { D.hrAvg = num(e.target.value); };
   const st = $('#cStyle'); if (st) st.onchange = e => { D.style = e.target.value; };
 
   wireOpt();
 }
 function refreshPace() {
-  const inputs = document.querySelectorAll('#view input[disabled]');
-  if (inputs[0]) inputs[0].value = paceCalc();
+  const el = $('#paceOut');
+  if (el) el.textContent = paceCalc();
 }
 
 /* ---------------------------- libre ---------------------------- */
@@ -688,15 +776,10 @@ function formLibre() {
       <label class="label">Actividad</label>
       <input id="lName" value="${esc(D.name || '')}" placeholder="Caminata, escalada, fútbol...">
     </div>
-    <div class="grid2">
-      <div class="field" style="margin:0">
-        <label class="label">Duración</label>
-        <input id="lDur" inputmode="numeric" value="${D.durSec ? fmtTime(D.durSec) : ''}" placeholder="mm:ss">
-      </div>
-      <div class="field" style="margin:0">
-        <label class="label">Intensidad</label>
-        <select id="lInt"><option value="">—</option>${['Suave','Moderada','Fuerte','Máxima'].map(x => `<option ${x === D.intensity ? 'selected' : ''}>${x}</option>`).join('')}</select>
-      </div>
+    ${timeHTML('lDur', D.durSec, 'Duración')}
+    <div class="field">
+      <label class="label">Intensidad</label>
+      <select id="lInt"><option value="">—</option>${['Suave','Moderada','Fuerte','Máxima'].map(x => `<option ${x === D.intensity ? 'selected' : ''}>${x}</option>`).join('')}</select>
     </div>
     <div id="optBox">${shown.map(o => optHTML(o)).join('')}</div>
     ${D.dist && D.durSec ? `<div style="color:var(--muted);font-size:13px;margin-top:8px">Ritmo: ${paceStr(D.durSec, D.dist)} /km</div>` : ''}
@@ -704,7 +787,7 @@ function formLibre() {
 }
 function wireLibre() {
   $('#lName').oninput = e => { D.name = e.target.value; };
-  $('#lDur').oninput = e => { D.durSec = parseTime(e.target.value); };
+  wireTime('lDur', v => { D.durSec = v; });
   $('#lInt').onchange = e => { D.intensity = e.target.value; };
   wireOpt();
 }
@@ -714,9 +797,13 @@ function wireLibre() {
 function weightSheet() {
   openSheet(`
     <h2>Peso corporal</h2>
-    <div class="grid2">
-      <div><label class="label">Fecha</label><input type="date" id="wDate" value="${todayISO()}"></div>
-      <div><label class="label">Kilos</label><input id="wKg" inputmode="decimal" placeholder="—"></div>
+    <div class="field">
+      <label class="label">Kilos</label>
+      <input id="wKg" inputmode="decimal" placeholder="—" autocomplete="off">
+    </div>
+    <div class="field">
+      <label class="label">Fecha</label>
+      <input type="date" id="wDate" value="${todayISO()}">
     </div>
     <button class="btn primary wide" style="margin-top:12px;--accent:var(--pesas)" id="wSave">Guardar peso</button>
     ${S.weights.length ? `<div class="hr"></div>` + S.weights.slice().sort((a, b) => a.date < b.date ? 1 : -1).slice(0, 8).map(w =>
@@ -772,6 +859,7 @@ SCREENS.diario = function () {
     : `<div class="empty">Nada por acá todavía.<br>Cargá tu primer entrenamiento desde Entrenar.</div>`}
     <div style="height:10px"></div>`;
 
+  keepStrip('diario');
   document.querySelectorAll('[data-f]').forEach(b => b.onclick = () => { DFILTER = b.dataset.f; SCREENS.diario(); });
   document.querySelectorAll('.sesh').forEach(el => el.onclick = () => detailSheet(el.dataset.id));
 };
@@ -884,6 +972,7 @@ SCREENS.metricas = function () {
     <div id="mBody"></div>
     <div style="height:10px"></div>`;
 
+  keepStrip('metricas');
   document.querySelectorAll('[data-focus]').forEach(b => b.onclick = () => {
     S.settings.focus = b.dataset.focus; save(); SCREENS.metricas();
   });

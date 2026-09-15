@@ -1,5 +1,5 @@
 /* Caché para que la app abra sin señal. Red primero, caché de respaldo. */
-const CACHE = 'entreno-v3';
+const CACHE = 'entreno-v4';
 const ASSETS = ['/', '/index.html', '/app.js', '/catalog.js', '/manifest.json',
   '/vendor/xlsx.full.min.js', '/apple-touch-icon.png', '/icon-192.png', '/icon-512.png'];
 
