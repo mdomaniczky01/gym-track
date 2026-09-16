@@ -275,8 +275,19 @@ function volumeOf(x) {
   let v = 0;
   (x.entries || []).forEach(en => (en.sets || []).forEach(st => {
     if (st.w != null && st.r != null) v += st.w * st.r;
+    if (en.uni && st.w2 != null && st.r2 != null) v += st.w2 * st.r2;
   }));
   return v;
+}
+
+/* una serie por lado cuenta como dos para el historial y los récords */
+function flatSets(en) {
+  const out = [];
+  (en.sets || []).forEach(st => {
+    if (st.w != null && st.r != null) out.push({ w: st.w, r: st.r, lado: en.uni ? 'Izquierda' : '' });
+    if (en.uni && st.w2 != null && st.r2 != null) out.push({ w: st.w2, r: st.r2, lado: 'Derecha' });
+  });
+  return out;
 }
 function sessionsSorted() {
   return S.sessions.slice().sort((a, b) =>
@@ -536,10 +547,12 @@ function saveForm() {
   ['dist', 'hrAvg'].forEach(k => { if (D[k] === '' || (D[k] != null && !isFinite(D[k]))) D[k] = null; });
 
   if (m === 'pesas') {
-    D.entries = (D.entries || []).map(en => ({
-      exerciseId: en.exerciseId,
-      sets: (en.sets || []).filter(st => st.w != null || st.r != null)
-    })).filter(en => en.sets.length);
+    D.entries = (D.entries || []).map(en => {
+      const sets = (en.sets || [])
+        .filter(st => st.w != null || st.r != null || st.w2 != null || st.r2 != null)
+        .map(st => en.uni ? st : { w: st.w, r: st.r });
+      return en.uni ? { exerciseId: en.exerciseId, uni: true, sets } : { exerciseId: en.exerciseId, sets };
+    }).filter(en => en.sets.length);
     if (!D.entries.length) { toast('Cargá al menos una serie'); return; }
     if (!D.name) {
       const r = S.routines.find(x => x.id === D.routineId);
@@ -581,19 +594,38 @@ function formPesas() {
 
 function entryHTML(en, i) {
   const sets = en.sets || [];
+  const uni = !!en.uni;
+  const inp = (j, f, v, mode) => `<input inputmode="${mode}" data-i="${i}" data-j="${j}" data-f="${f}" value="${v != null ? v : ''}" placeholder="—">`;
+
+  const fila = (st, j) => uni
+    ? `<div class="setrow uni">
+        <span class="n">${j + 1}</span>
+        <div class="sides">
+          <div class="side"><span class="sl">I</span>${inp(j, 'w', st.w, 'decimal')}${inp(j, 'r', st.r, 'numeric')}</div>
+          <div class="side"><span class="sl">D</span>${inp(j, 'w2', st.w2, 'decimal')}${inp(j, 'r2', st.r2, 'numeric')}</div>
+        </div>
+        <button class="x" data-del-set="${i}:${j}">✕</button>
+      </div>`
+    : `<div class="setrow">
+        <span class="n">${j + 1}</span>
+        ${inp(j, 'w', st.w, 'decimal')}
+        ${inp(j, 'r', st.r, 'numeric')}
+        <button class="x" data-del-set="${i}:${j}">✕</button>
+      </div>`;
+
   return `<div class="exblk" data-i="${i}">
     <div class="hd">
       <div class="nm">${esc(exName(en.exerciseId))}</div>
       <button class="x" data-del-ex="${i}">✕</button>
     </div>
-    <div class="minis"><span></span><span class="mini">Peso (kg)</span><span class="mini">Reps</span><span></span></div>
-    ${sets.map((st, j) => `
-      <div class="setrow">
-        <span class="n">${j + 1}</span>
-        <input inputmode="decimal" data-i="${i}" data-j="${j}" data-f="w" value="${st.w != null ? st.w : ''}" placeholder="—">
-        <input inputmode="numeric" data-i="${i}" data-j="${j}" data-f="r" value="${st.r != null ? st.r : ''}" placeholder="—">
-        <button class="x" data-del-set="${i}:${j}">✕</button>
-      </div>`).join('')}
+    <div class="row" style="margin-top:8px">
+      <button class="unibtn ${uni ? 'on' : ''}" data-uni="${i}">${uni ? 'Por lado' : 'Por lado'}</button>
+      <div class="grow"></div>
+    </div>
+    ${uni
+      ? `<div class="side" style="margin-top:10px"><span></span><span class="mini">Peso (kg)</span><span class="mini">Reps</span></div>`
+      : `<div class="minis"><span></span><span class="mini">Peso (kg)</span><span class="mini">Reps</span><span></span></div>`}
+    ${sets.map(fila).join('')}
     <div class="row" style="margin-top:10px;gap:8px">
       <button class="btn sm grow" data-add-set="${i}">+ Serie</button>
       <button class="btn sm grow" data-copy-set="${i}">Repetir última</button>
@@ -629,8 +661,17 @@ function wirePesas() {
     else if (b.dataset.addSet !== undefined) { D.entries[+b.dataset.addSet].sets.push({ w: null, r: null }); SCREENS.form(); }
     else if (b.dataset.copySet !== undefined) {
       const sets = D.entries[+b.dataset.copySet].sets;
-      const last = sets[sets.length - 1] || { w: null, r: null };
-      sets.push({ w: last.w, r: last.r }); SCREENS.form();
+      const last = sets[sets.length - 1] || {};
+      sets.push({ w: last.w != null ? last.w : null, r: last.r != null ? last.r : null,
+                  w2: last.w2 != null ? last.w2 : null, r2: last.r2 != null ? last.r2 : null });
+      SCREENS.form();
+    }
+    else if (b.dataset.uni !== undefined) {
+      const en = D.entries[+b.dataset.uni];
+      en.uni = !en.uni;
+      /* al pasar a por lado, el peso ya cargado se copia al otro lado */
+      if (en.uni) en.sets.forEach(st => { if (st.w2 == null) st.w2 = st.w; if (st.r2 == null) st.r2 = st.r; });
+      SCREENS.form();
     } else if (b.dataset.delSet !== undefined) {
       const [i, j] = b.dataset.delSet.split(':').map(Number);
       D.entries[i].sets.splice(j, 1); SCREENS.form();
@@ -873,7 +914,8 @@ function headline(x) {
 function subline(x) {
   if (x.modality === 'pesas') {
     const sets = (x.entries || []).reduce((a, e) => a + e.sets.length, 0);
-    return `${x.entries.length} ejercicios · ${sets} series${x.durSec ? ' · ' + fmtTime(x.durSec) : ''}`;
+    const uni = (x.entries || []).some(e => e.uni);
+    return `${x.entries.length} ejercicios · ${sets} series${uni ? ' (por lado)' : ''}${x.durSec ? ' · ' + fmtTime(x.durSec) : ''}`;
   }
   if (x.modality === 'libre') {
     const b = [];
@@ -905,7 +947,9 @@ function detailSheet(id) {
       <div style="margin-bottom:12px">
         <div style="font-weight:700;font-size:15px">${esc(exName(en.exerciseId))}</div>
         <div class="num" style="color:var(--muted);font-size:14px;margin-top:3px">
-          ${en.sets.map(st => `${st.w != null ? st.w : '—'}×${st.r != null ? st.r : '—'}`).join('  ·  ')}
+          ${en.uni
+            ? en.sets.map(st => `I ${st.w != null ? st.w : '—'}×${st.r != null ? st.r : '—'} / D ${st.w2 != null ? st.w2 : '—'}×${st.r2 != null ? st.r2 : '—'}`).join('<br>')
+            : en.sets.map(st => `${st.w != null ? st.w : '—'}×${st.r != null ? st.r : '—'}`).join('  ·  ')}
         </div>
       </div>`).join('');
     body += `<div class="hr"></div><div style="color:var(--muted);font-size:14px">Volumen total: <b class="num" style="color:var(--text)">${Math.round(volumeOf(x)).toLocaleString('es')} kg</b></div>`;
@@ -1053,7 +1097,7 @@ function viewPesas(list) {
 function prTable() {
   const best = {};
   S.sessions.filter(x => x.modality === 'pesas').forEach(x =>
-    (x.entries || []).forEach(en => (en.sets || []).forEach(st => {
+    (x.entries || []).forEach(en => flatSets(en).forEach(st => {
       if (st.w == null || st.r == null) return;
       const e1 = st.w * (1 + st.r / 30); // Epley
       const cur = best[en.exerciseId];
@@ -1466,11 +1510,16 @@ function exportXlsx() {
   /* Pesas: una fila por serie */
   const pes = [];
   ord.filter(x => x.modality === 'pesas').forEach(x =>
-    (x.entries || []).forEach(en => (en.sets || []).forEach((st, j) => pes.push({
-      Fecha: x.date, Sesión: sessionTitle(x), Ejercicio: exName(en.exerciseId),
-      Serie: j + 1, 'Peso (kg)': st.w != null ? st.w : '', Reps: st.r != null ? st.r : '',
-      'Volumen (kg)': (st.w != null && st.r != null) ? round(st.w * st.r, 1) : '', Notas: x.notes || ''
-    }))));
+    (x.entries || []).forEach(en => (en.sets || []).forEach((st, j) => {
+      const fila = (peso, reps, lado) => pes.push({
+        Fecha: x.date, Sesión: sessionTitle(x), Ejercicio: exName(en.exerciseId),
+        Serie: j + 1, Lado: lado,
+        'Peso (kg)': peso != null ? peso : '', Reps: reps != null ? reps : '',
+        'Volumen (kg)': (peso != null && reps != null) ? round(peso * reps, 1) : '', Notas: x.notes || ''
+      });
+      if (en.uni) { fila(st.w, st.r, 'Izquierda'); fila(st.w2, st.r2, 'Derecha'); }
+      else fila(st.w, st.r, '');
+    })));
   add(pes, 'Pesas');
 
   /* Cardio */
@@ -1529,8 +1578,7 @@ const e1rm = st => (st.w != null && st.r != null) ? st.w * (1 + st.r / 30) : 0;
 function exHistory(id) {
   return S.sessions.filter(x => x.modality === 'pesas' && (x.entries || []).some(e => e.exerciseId === id))
     .map(x => {
-      const sets = x.entries.filter(e => e.exerciseId === id).reduce((a, e) => a.concat(e.sets), [])
-        .filter(st => st.w != null && st.r != null);
+      const sets = x.entries.filter(e => e.exerciseId === id).reduce((a, e) => a.concat(flatSets(e)), []);
       if (!sets.length) return null;
       const top = sets.reduce((a, b) => e1rm(b) > e1rm(a) ? b : a);
       const topW = Math.max.apply(null, sets.map(st => st.w));

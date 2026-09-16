@@ -38,6 +38,16 @@ las reps de cada ejercicio a partir de la última vez que lo hiciste. El botón 
 
 Todo el coach corre en el teléfono. No hay API, no hay cuenta y no manda nada a ningún lado.
 
+## Pruebas
+
+```
+npm i jsdom xlsx
+node tests/e2e.js
+```
+
+23 pruebas de extremo a extremo: migración de datos viejos, carga en las cinco modalidades,
+series por lado, navegación hacia atrás, coach, métricas y exportación.
+
 ## Estructura
 
 ```
@@ -46,6 +56,7 @@ public/app.js       toda la lógica
 public/catalog.js   1.266 ejercicios con grupo muscular
 public/vendor/      SheetJS local, para exportar a Excel sin conexión
 public/sw.js        caché offline
+tests/e2e.js        pruebas con jsdom
 public/manifest.json
 public/apple-touch-icon.png   ícono del bíceps (180px)
 vercel.json
@@ -55,6 +66,13 @@ vercel.json
 
 Después de la primera visita queda todo en caché: la app abre y guarda entrenamientos en el subsuelo
 del gym sin datos. La exportación a Excel también funciona offline.
+
+## Series por lado
+
+En cualquier ejercicio de pesas, el botón **Por lado** parte la serie en izquierda y derecha:
+pasa de dos casillas a cuatro. El volumen suma los dos lados, el diario lo marca, el detalle
+muestra `I 20×10 / D 20×8` y el Excel saca una fila por lado con su columna Lado.
+Al activarlo copia lo que ya tenías cargado al lado derecho, así solo corregís lo que difiere.
 
 ## Volver atrás
 
