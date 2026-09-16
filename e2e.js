@@ -69,8 +69,33 @@ t('la barra inferior no usa blur y el contenido no queda debajo', () => {
   const nav = raw.slice(raw.indexOf('nav{'), raw.indexOf('nav button{'));
   if (nav.includes('backdrop-filter')) throw new Error('sigue el blur');
   if (!nav.includes('translateZ(0)')) throw new Error('sin capa propia');
-  if (!raw.includes('padding-bottom:calc(84px + var(--safe-b))')) throw new Error('falta espacio para la barra');
+  if (!raw.includes('padding-bottom:calc(92px + var(--safe-b))')) throw new Error('falta espacio para la barra');
 });
+t('las hojas quedan por encima de la barra inferior', () => {
+  const capa = sel => { const i = raw.indexOf(sel); return +raw.slice(i, i + 400).match(/z-index:(\d+)/)[1]; };
+  const nav = capa('nav{'), velo = capa('.veil{'), hoja = capa('.sheet{');
+  if (!(nav < velo && velo < hoja)) throw new Error(`capas mal: nav ${nav}, velo ${velo}, hoja ${hoja}`);
+  if (!raw.includes('calc(34px + var(--safe-b))')) throw new Error('la hoja no deja aire abajo');
+});
+
+t('con el teclado abierto la barra se retira', async () => {
+  tab('hoy'); click($$('.pick button')[0]);
+  const inp = $('#fName');
+  inp.dispatchEvent(new w.FocusEvent('focusin', { bubbles: true }));
+  if (!w.document.documentElement.classList.contains('kb')) throw new Error('no se retira');
+  inp.dispatchEvent(new w.FocusEvent('focusout', { bubbles: true }));
+  await tick(); await tick();
+  if (w.document.documentElement.classList.contains('kb')) throw new Error('no vuelve');
+  click($('#back'));
+});
+
+t('abrir una hoja bloquea el scroll del fondo y cerrarla lo devuelve', async () => {
+  tab('ajustes'); click($('#aRt')); await tick();
+  if (!w.document.documentElement.classList.contains('lock')) throw new Error('el fondo sigue scrolleando');
+  click($('#sheetX')); await tick();
+  if (w.document.documentElement.classList.contains('lock')) throw new Error('quedó bloqueado');
+});
+
 t('el campo de fecha tiene alto propio y alineación', () => {
   if (!raw.includes('input[type="date"]::-webkit-date-and-time-value')) throw new Error('sin el arreglo de iOS');
 });

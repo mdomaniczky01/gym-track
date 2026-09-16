@@ -45,7 +45,7 @@ npm i jsdom xlsx
 node tests/e2e.js
 ```
 
-23 pruebas de extremo a extremo: migración de datos viejos, carga en las cinco modalidades,
+26 pruebas de extremo a extremo: migración de datos viejos, carga en las cinco modalidades,
 series por lado, navegación hacia atrás, coach, métricas y exportación.
 
 ## Estructura
@@ -79,6 +79,12 @@ Al activarlo copia lo que ya tenías cargado al lado derecho, así solo corregí
 El gesto de deslizar desde el borde y el botón atrás del sistema cierran la capa abierta
 (primero la hoja, después el formulario) en vez de salir de la app. Además hay una flecha
 arriba a la izquierda en los formularios y una ✕ en las hojas.
+
+## Capas de la interfaz
+
+El orden importa y es fácil de romper sin darse cuenta: barra inferior `z-index:60`,
+velo `80`, hoja `90`, avisos `200`. Si la barra sube por encima del velo, tapa el final
+de las hojas. Hay una prueba que falla si ese orden se invierte.
 
 ## Cuidado con los datos
 

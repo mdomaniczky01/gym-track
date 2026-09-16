@@ -353,11 +353,13 @@ function openSheet(html) {
   $('#veil').classList.add('on');
   requestAnimationFrame(() => sh.classList.add('on'));
   $('#sheetX').onclick = closeSheet;
+  document.documentElement.classList.add('lock');
   if (!yaAbierta) pushNav('sheet');
 }
 function realCloseSheet() {
   $('#sheet').classList.remove('on');
   $('#veil').classList.remove('on');
+  document.documentElement.classList.remove('lock');
 }
 function closeSheet() {
   realCloseSheet();
@@ -391,6 +393,21 @@ function render() {
   if (s) s();
 }
 document.querySelectorAll('#nav button').forEach(b => b.onclick = () => go(b.dataset.tab));
+
+/* teclado abierto: la barra inferior se retira para no tapar el campo */
+(function () {
+  const root = document.documentElement;
+  const esCampo = el => el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
+  document.addEventListener('focusin', e => { if (esCampo(e.target)) root.classList.add('kb'); });
+  document.addEventListener('focusout', () => {
+    setTimeout(() => { if (!esCampo(document.activeElement)) root.classList.remove('kb'); }, 60);
+  });
+  const vv = window.visualViewport;
+  if (vv) vv.addEventListener('resize', () => {
+    const tapado = window.innerHeight - vv.height > 120;
+    if (!tapado) root.classList.remove('kb');
+  });
+})();
 
 load();
 
